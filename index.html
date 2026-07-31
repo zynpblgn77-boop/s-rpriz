@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sürpriz! ✨</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        :root {
+            --bg-color: #080812;
+            --text-color: #f7ebe8;
+            --accent-color: #ff8fab;
+            --card-bg: #1a1a2e;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        body { background-color: var(--bg-color); color: var(--text-color); overflow-x: hidden; }
+
+        .screen { display: none; min-height: 100vh; flex-direction: column; justify-content: center; align-items: center; width: 100%; position: absolute; top: 0; left: 0; }
+        .active-screen { display: flex; }
+
+        /* 1. ŞİFRE EKRANI */
+        .polaroid-preview { background: white; padding: 15px 15px 40px 15px; transform: rotate(-3deg); margin-bottom: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        .polaroid-preview img { width: 200px; height: 200px; object-fit: cover; filter: grayscale(20%); }
+        .pin-container { background: var(--card-bg); padding: 25px; border-radius: 20px; }
+        .pin-display { height: 50px; background: rgba(0,0,0,0.4); border: 2px solid var(--accent-color); border-radius: 10px; margin-bottom: 20px; font-size: 24px; letter-spacing: 5px; text-align: center; line-height: 50px; }
+        .pin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+        .pin-btn { width: 60px; height: 60px; border-radius: 50%; border: none; background: #2a2a4a; color: white; font-size: 20px; cursor: pointer; transition: 0.2s; }
+        .pin-btn:active { transform: scale(0.9); background: var(--accent-color); }
+
+        /* 2. ZARF EKRANI */
+        .envelope { width: 150px; height: 100px; background: #d64550; position: relative; animation: float 2s infinite ease-in-out; cursor: pointer; }
+        .envelope::before { content: ''; position: absolute; top: 0; left: 0; border-left: 75px solid transparent; border-right: 75px solid transparent; border-top: 50px solid #b8323d; }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-15px); } }
+
+        /* 3. PARTİCLE VE KAMERA EKRANI */
+        #particle-screen { background-color: var(--bg-color); overflow: hidden; }
+        #canvas { display: block; z-index: 1; }
+        #loading { position: absolute; top: 20px; font-size: 1.2rem; color: var(--accent-color); z-index: 2; text-align: center; }
+        
+        #video { 
+            display: none; 
+            position: fixed; bottom: 20px; right: 20px; width: 240px; 
+            border-radius: 10px; border: 2px solid var(--accent-color); 
+            z-index: 10; transform: scaleX(-1); opacity: 0.8;
+        }
+
+        /* YENİ: FOTOĞRAF GÖSTERİM EKRANI */
+        #photo-reveal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 5; /* Parçacıkların üstünde */
+            opacity: 0; /* Başlangıçta gizli */
+            transition: opacity 1.5s ease-in-out; /* Fade efekti */
+            pointer-events: none; 
+        }
+        
+        #photo-reveal img {
+            max-width: 80vw;
+            max-height: 70vh;
+            border-radius: 15px;
+            box-shadow: 0 0 40px rgba(255, 143, 171, 0.4); /* Etrafında tatlı bir parlama */
+            border: 3px solid var(--accent-color);
+            object-fit: cover;
+        }
+
+        /* JavaScript ile bu class eklendiğinde fotoğraf görünür olacak */
+        #photo-reveal.show {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen" class="screen active-screen">
+        <div class="polaroid-preview">
+            <img src="kapak.jpg" onerror="this.src='https://picsum.photos/250/200?romantic'">
+            <p style="color: #333; margin-top: 10px; font-weight: bold; text-align:center;">Şifre? ✨</p>
+        </div>
+        <div class="pin-container">
+            <div class="pin-display" id="display">******</div>
+            <div class="pin-grid">
+                <button class="pin-btn" onclick="press(1)">1</button>
+                <button class="pin-btn" onclick="press(2)">2</button>
+                <button class="pin-btn" onclick="press(3)">3</button>
+                <button class="pin-btn" onclick="press(4)">4</button>
+                <button class="pin-btn" onclick="press(5)">5</button>
+                <button class="pin-btn" onclick="press(6)">6</button>
+                <button class="pin-btn" onclick="press(7)">7</button>
+                <button class="pin-btn" onclick="press(8)">8</button>
+                <button class="pin-btn" onclick="press(9)">9</button>
+                <button class="pin-btn" onclick="clearPin()">C</button>
+                <button class="pin-btn" onclick="press(0)">0</button>
+                <button class="pin-btn" onclick="checkPin()">➡️</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="transition-screen" class="screen" onclick="startMagic()">
+        <div class="envelope"></div>
+        <p style="margin-top: 40px; color: var(--accent-color);">Açmak için dokun...</p>
+    </div>
+
+    <div id="particle-screen" class="screen">
+        <div id="loading">Sihir yükleniyor, kameraya izin ver...</div>
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+        
+        <div id="photo-reveal">
+            <img src="bizim_fotograf.jpg" alt="Biz" onerror="this.src='https://picsum.photos/500/600?romantic'">
+        </div>
+    </div>
+
+    <script>
+        const CORRECT_PIN = "010525"; 
+        let currentInput = "";
+        function press(num) { if(currentInput.length < 6) { currentInput += num; updateDisplay(); } }
+        function clearPin() { currentInput = ""; updateDisplay(); }
+        function updateDisplay() { document.getElementById("display").innerText = currentInput.padEnd(6, "*").replace(/./g, (c, i) => i < currentInput.length ? "•" : "*"); }
+        function checkPin() {
+            if (currentInput === CORRECT_PIN) {
+                document.getElementById('login-screen').classList.remove('active-screen');
+                document.getElementById('transition-screen').classList.add('active-screen');
+            } else { alert("Hatalı şifre! ❤️"); clearPin(); }
+        }
+
+        let cameraStarted = false;
+        function startMagic() {
+            document.getElementById('transition-screen').classList.remove('active-screen');
+            document.getElementById('particle-screen').classList.add('active-screen');
+
+            if(!cameraStarted) {
+                initCanvas();
+                startMediaPipe();
+                cameraStarted = true;
+            }
+        }
+
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const videoElement = document.getElementById('video');
+        const photoElement = document.getElementById('photo-reveal');
+
+        let particlesArray = [];
+        let mouse = { x: null, y: null };
+        let currentGesture = "DEFAULT"; 
+        let animationId;
+
+        class Particle {
+            constructor(x, y, id){
+                this.id = id;
+                this.x = Math.random() * canvas.width; 
+                this.y = Math.random() * canvas.height;
+                this.size = Math.random() * 2 + 1; 
+                this.color = '#ff8fab'; 
+                this.baseX = x; 
+                this.baseY = y;
+                this.density = (Math.random() * 20) + 5; 
+                this.friction = 0.88; 
+                this.ease = 0.04; 
+                this.vx = 0; 
+                this.vy = 0;
+                this.angle = Math.random() * Math.PI * 2;
+                this.radius = Math.random() * 150 + 50;
+            }
+            draw() { 
+                ctx.fillStyle = this.color; 
+                ctx.beginPath(); 
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); 
+                ctx.fill(); 
+            }
+            update() {
+                let targetX = this.baseX;
+                let targetY = this.baseY;
+                let time = Date.now() * 0.001;
+                
+                this.color = '#ff8fab'; 
+
+                // YENİ DURUM: İki El Açık (Fotoğraf Gösterimi)
+                if (currentGesture === "TWO_HANDS_OPEN") {
+                    // Parçacıklar fotoğrafa yer açmak için merkezden dışarı doğru yavaşça uzaklaşır
+                    let dxToCenter = this.x - canvas.width / 2;
+                    let dyToCenter = this.y - canvas.height / 2;
+                    let distToCenter = Math.hypot(dxToCenter, dyToCenter);
+                    
+                    if (distToCenter < 1) distToCenter = 1;
+                    targetX = this.x + (dxToCenter / distToCenter) * 10;
+                    targetY = this.y + (dyToCenter / distToCenter) * 10;
+                    this.color = 'rgba(255, 143, 171, 0.3)'; // Parçacıklar silikleşir
+                    
+                } else if (currentGesture === "FIST") {
+                    targetX = canvas.width / 2 + Math.sin(time * 2 + this.id * 0.01) * 100;
+                    targetY = canvas.height / 2 + Math.cos(time * 1.5 + this.id * 0.01) * 100 + Math.sin(time * 3) * 50;
+                    
+                } else if (currentGesture === "ONE") {
+                    this.angle += 0.05;
+                    if (mouse.x) {
+                        targetX = mouse.x + Math.cos(this.angle) * this.radius;
+                        targetY = mouse.y + Math.sin(this.angle) * this.radius;
+                    }
+                    
+                } else if (currentGesture === "TWO") {
+                    let t = (time * 1.5) + (this.id * 0.02); 
+                    let scale = Math.min(canvas.width, canvas.height) * 0.35;
+                    let lemniscateX = (scale * Math.cos(t)) / (1 + Math.sin(t) * Math.sin(t));
+                    let lemniscateY = (scale * Math.cos(t) * Math.sin(t)) / (1 + Math.sin(t) * Math.sin(t));
+                    let noiseX = Math.cos(time * 10 + this.id) * 20;
+                    let noiseY = Math.sin(time * 10 + this.id) * 20;
+                    targetX = canvas.width / 2 + lemniscateX + noiseX;
+                    targetY = canvas.height / 2 + lemniscateY + noiseY;
+                    
+                } else if (currentGesture === "THREE") {
+                    let floatingY = Math.sin(time * 4 + this.baseX * 0.01) * 12; 
+                    let sweepSpeed = 450;
+                    let sweepPosition = (time * sweepSpeed) % (canvas.width + 200) - 100;
+                    let distanceToSweep = Math.abs(this.baseX - sweepPosition);
+                    
+                    if (distanceToSweep < 90) {
+                        let spike = Math.sin((distanceToSweep / 90) * Math.PI * 3) * 60;
+                        targetX = this.baseX;
+                        targetY = this.baseY - (spike * (90 - distanceToSweep) / 90) + floatingY; 
+                        this.color = '#ff1744'; 
+                    } else {
+                        targetX = this.baseX;
+                        targetY = this.baseY + floatingY;
+                    }
+                    
+                } else if (currentGesture === "FOUR") {
+                    let beatTime = (time * 1.5) % 1; 
+                    let scaleBeat = 0;
+                    if (beatTime < 0.1) scaleBeat = Math.sin(beatTime * 10 * Math.PI); 
+                    else if (beatTime > 0.2 && beatTime < 0.3) scaleBeat = Math.sin((beatTime - 0.2) * 10 * Math.PI); 
+                    targetX = canvas.width/2 + (this.baseX - canvas.width/2) * (1 + scaleBeat * 0.2);
+                    targetY = canvas.height/2 + (this.baseY - canvas.height/2) * (1 + scaleBeat * 0.2);
+                    if (scaleBeat > 0.1) this.color = '#ff1744'; 
+
+                } else if (currentGesture === "OPEN") {
+                    let cycle = (time * 0.4) % 1; 
+                    let expRadius = cycle * (this.radius * 3 + canvas.width * 0.4); 
+                    let gravity = Math.pow(cycle, 3) * 400; 
+                    targetX = canvas.width / 2 + Math.cos(this.angle) * expRadius;
+                    targetY = canvas.height / 2 + Math.sin(this.angle) * expRadius + gravity;
+                    if (Math.random() < 0.05) this.color = '#ffffff'; 
+                    
+                } else {
+                    targetX = this.baseX;
+                    targetY = this.baseY;
+                    if (mouse.x != null) {
+                        let dx = mouse.x - this.x;
+                        let dy = mouse.y - this.y;
+                        let distance = Math.sqrt(dx * dx + dy * dy);
+                        if (distance < 120) {
+                            let force = (120 - distance) / 120;
+                            this.vx -= (dx / distance) * force * (this.density * 0.4);
+                            this.vy -= (dy / distance) * force * (this.density * 0.4);
+                        }
+                    }
+                }
+
+                let dx = targetX - this.x;
+                let dy = targetY - this.y;
+                this.vx += dx * this.ease; 
+                this.vy += dy * this.ease;
+                this.vx *= this.friction; 
+                this.vy *= this.friction;
+                this.x += this.vx; 
+                this.y += this.vy;
+            }
+        }
+
+        function initCanvas() {
+            canvas.width = window.innerWidth; 
+            canvas.height = window.innerHeight;
+            particlesArray = [];
+            
+            ctx.fillStyle = 'white'; 
+            let fontSize = Math.min(canvas.width * 0.15, 180); 
+            ctx.font = `bold ${fontSize}px Arial`; 
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle'; 
+            
+            ctx.fillText('I ❤️ U', canvas.width/2, canvas.height/2);
+            
+            const textCoordinates = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            let idCounter = 0;
+            for (let y = 0, y2 = textCoordinates.height; y < y2; y += 4) { 
+                for (let x = 0, x2 = textCoordinates.width; x < x2; x += 4) {
+                    if (textCoordinates.data[(y * 4 * textCoordinates.width) + (x * 4) + 3] > 128) {
+                        particlesArray.push(new Particle(x, y, idCounter));
+                        idCounter++;
+                    }
+                }
+            }
+            animate();
+        }
+
+        function animate() {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = 'rgba(8, 8, 18, 0.3)'; 
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.globalCompositeOperation = 'lighter'; 
+            particlesArray.forEach(p => { p.draw(); p.update(); });
+            
+            animationId = requestAnimationFrame(animate);
+        }
+
+        // YENİ: Parmak sayma fonksiyonunu dışarı aldık (Çift el için kullanılacak)
+        function countFingers(landmarks) {
+            let fingersUp = 0;
+            let threshold = 0.03; 
+            
+            if (landmarks[8].y < landmarks[6].y - threshold) fingersUp++;   
+            if (landmarks[12].y < landmarks[10].y - threshold) fingersUp++; 
+            if (landmarks[16].y < landmarks[14].y - threshold) fingersUp++; 
+            if (landmarks[20].y < landmarks[18].y - threshold) fingersUp++; 
+
+            let thumbDist = Math.hypot(landmarks[4].x - landmarks[17].x, landmarks[4].y - landmarks[17].y);
+            let thumbBaseDist = Math.hypot(landmarks[3].x - landmarks[17].x, landmarks[3].y - landmarks[17].y);
+            if (thumbDist > thumbBaseDist) fingersUp++; 
+
+            return fingersUp;
+        }
+
+        // YENİ: Tek elin animasyonunu yöneten yardımcı fonksiyon
+        function processSingleHand(landmarks) {
+            mouse.x = (1 - landmarks[8].x) * canvas.width; 
+            mouse.y = landmarks[8].y * canvas.height;
+            
+            let fingersUp = countFingers(landmarks);
+
+            if (fingersUp === 0) currentGesture = "FIST";
+            else if (fingersUp === 1) currentGesture = "ONE";
+            else if (fingersUp === 2) currentGesture = "TWO";
+            else if (fingersUp === 3) currentGesture = "THREE";
+            else if (fingersUp === 4) currentGesture = "FOUR";
+            else if (fingersUp >= 5) currentGesture = "OPEN";
+        }
+
+        function startMediaPipe() {
+            // maxNumHands artık 2! İki eli aynı anda görebiliyor
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            
+            hands.onResults((results) => {
+                document.getElementById('loading').style.display = "none";
+                
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    
+                    // Eğer iki el birden kameradaysa
+                    if (results.multiHandLandmarks.length === 2) {
+                        let f1 = countFingers(results.multiHandLandmarks[0]);
+                        let f2 = countFingers(results.multiHandLandmarks[1]);
+                        
+                        // İki elin de parmakları açıksa fotoğrafı göster (4 veya 5 parmak yeterli)
+                        if (f1 >= 4 && f2 >= 4) {
+                            photoElement.classList.add('show');
+                            currentGesture = "TWO_HANDS_OPEN";
+                            mouse.x = undefined; mouse.y = undefined;
+                        } else {
+                            // İki el var ama açık değilse fotoğrafı gizle ve ilk ele odaklan
+                            photoElement.classList.remove('show');
+                            processSingleHand(results.multiHandLandmarks[0]);
+                        }
+                    } else {
+                        // Sadece tek el kameradaysa fotoğrafı gizle ve normal animasyonları yap
+                        photoElement.classList.remove('show');
+                        processSingleHand(results.multiHandLandmarks[0]);
+                    }
+                    
+                } else { 
+                    // Ekranda el yoksa
+                    photoElement.classList.remove('show');
+                    mouse.x = undefined; 
+                    mouse.y = undefined; 
+                    currentGesture = "DEFAULT";
+                }
+            });
+            const camera = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 640, height: 480 });
+            camera.start();
+        }
+
+        window.addEventListener('resize', function() {
+            if(document.getElementById('particle-screen').classList.contains('active-screen')) {
+                cancelAnimationFrame(animationId);
+                initCanvas();
+            }
+        });
+    </script>
+</body>
+</html>
